@@ -3,7 +3,7 @@ use async_std::task;
 use clap::{App, Arg};
 use lib::{BaseConf, Task};
 
-fn parseConf(path: &str) -> BaseConf {
+fn parse_conf(path: &str) -> BaseConf {
     use std::io::prelude::*;
     let mut file = match std::fs::File::open(&path) {
         Ok(file) => file,
@@ -35,18 +35,16 @@ fn main() {
         .arg(
             Arg::with_name("OUTPUT")
                 .help("Sets the output file to store")
-                .required(false)
+                .required(true)
                 .index(1),
         )
         .get_matches();
 
     let config = matches.value_of("config").unwrap_or("conf.toml");
-    let mut base_conf = parseConf(config);
-    if matches.is_present("OUTPUT") {
-        base_conf.output = String::from(matches.value_of("OUTPUT").unwrap());
-    }
+    let base_conf = parse_conf(config);
     task::block_on(async {
-        let mut task = match Task::new(&base_conf) {
+        let mut task = match Task::new(base_conf, String::from(matches.value_of("OUTPUT").unwrap()))
+        {
             Ok(t) => t,
             Err(e) => panic!(e),
         };

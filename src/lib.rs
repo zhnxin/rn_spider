@@ -1,24 +1,21 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use serde::Deserialize;
-#[derive(Deserialize, Debug)]
+#[derive(Default, Deserialize, Debug)]
 pub struct BaseConf {
     pub base: String,
     pub url_list: Vec<String>,
-    pub output: String,
     pub title: String,
     pub content: String,
-    pub proxy: String,
+    pub next: String,
+    pub next_regexp: String,
 }
 #[derive(Default, Debug)]
 pub struct Task {
+    base: BaseConf,
     is_running: AtomicBool,
-    current: AtomicUsize,
-    base_url: String,
-    url_list: Vec<String>,
     output: String,
-    title_selector: String,
-    content_selector: String,
+    current: AtomicUsize,
 }
 
 #[derive(Debug)]
@@ -47,29 +44,17 @@ impl std::error::Error for ErrorWithStr {
 }
 
 impl Task {
-    pub fn new(conf: &'_ BaseConf) -> Result<Self, String> {
-        let mut t = Task {
+    pub fn new(conf: BaseConf, ouput: String) -> Result<Self, String> {
+        let t = Task {
             is_running: AtomicBool::new(false),
-            base_url: conf.base.clone(),
-            output: conf.output.clone(),
+            base: conf,
+            output: ouput,
             ..Default::default()
         };
-        t.url_list = conf.url_list.iter().map(|s| s.clone()).collect();
-        if conf.title.len() > 0 {
-            t.title_selector = conf.title.clone();
-        }
-        if conf.content.len() > 0 {
-            t.content_selector = conf.content.clone();
-        } else {
+        if t.base.content.is_empty() {
             return Err(String::from("content is expected"));
         }
         Ok(t)
-    }
-    fn is_url_valid(&self, next: &'_ String) -> bool {
-        if !next.ends_with(".html") {
-            return false;
-        }
-        true
     }
     pub fn stop(&mut self) {
         *self.is_running.get_mut() = false;
@@ -90,18 +75,36 @@ impl Task {
         let sty = indicatif::ProgressStyle::default_bar()
             .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
             .progress_chars("##-");
-        let pb: indicatif::ProgressBar = indicatif::ProgressBar::new(self.url_list.len() as u64);
+        let pb: indicatif::ProgressBar =
+            indicatif::ProgressBar::new(self.base.url_list.len() as u64);
         pb.set_style(sty);
+        let _title_selector: Option<scraper::Selector> = if !self.base.title.is_empty() {
+            Some(scraper::Selector::parse(&self.base.title).unwrap())
+        } else {
+            None
+        };
+        let _content_selector = scraper::Selector::parse(&self.base.content).unwrap();
+        let _next_selector: Option<scraper::Selector> = if !self.base.next.is_empty() {
+            Some(scraper::Selector::parse(&self.base.next).unwrap())
+        } else {
+            None
+        };
+
+        let _next_pattern: Option<regex::Regex> = if !self.base.next_regexp.is_empty() {
+            Some(regex::Regex::new(self.base.next_regexp.as_ref()).unwrap())
+        } else {
+            None
+        };
+
         loop {
             if !self.is_running.load(Ordering::SeqCst) {
                 return Ok(());
             }
             let current = self.current.load(Ordering::SeqCst);
-            if let Some(s) = self.url_list.get(current) {
-                url = self.base_url.clone();
+            if let Some(s) = self.base.url_list.get(current) {
+                url = self.base.base.clone();
                 url.push_str(s.as_str());
                 pb.set_message(&format!("item {:?}", s));
-                pb.inc(1);
             } else {
                 return Err(Box::new(ErrorWithStr::new(
                     "index out of board for current",
@@ -109,16 +112,14 @@ impl Task {
             }
             let mut res = surf::get(&url).await?;
             let document = scraper::Html::parse_document(&res.body_string().await?);
-            if !self.title_selector.is_empty() {
-                let _title_selector = scraper::Selector::parse(&self.title_selector).unwrap();
-                let title = document.select(&_title_selector).next().unwrap();
+            if let Some(selector) = _title_selector.as_ref() {
+                let title = document.select(selector).next().unwrap();
                 for s in title.text() {
                     output.write_all(s.as_bytes()).await?;
                 }
                 output.write_all(&['\n' as u8]).await?;
             }
             {
-                let _content_selector = scraper::Selector::parse(&self.content_selector).unwrap();
                 if let Some(content) = document.select(&_content_selector).next() {
                     for s in content.text() {
                         output.write_all(s.as_bytes()).await?;
@@ -128,11 +129,27 @@ impl Task {
                     return Err(Box::new(ErrorWithStr::new("no content found")));
                 }
             }
+            if let Some(selector) = _next_selector.as_ref() {
+                if let Some(next) = document.select(selector).next() {
+                    if let Some(href) = next.value().attr("href") {
+                        if let Some(pattern) = _next_pattern.as_ref() {
+                            if pattern.is_match(href) {
+                                self.base.url_list[current] = String::from(href);
+                                continue;
+                            }
+                        } else {
+                            self.base.url_list[current] = String::from(href);
+                            continue;
+                        }
+                    }
+                }
+            }
             {
                 *self.current.get_mut() += 1;
-                if self.current.load(Ordering::SeqCst) >= self.url_list.len() {
+                pb.inc(1);
+                if self.current.load(Ordering::SeqCst) >= self.base.url_list.len() {
                     *self.is_running.get_mut() = false;
-                    pb.finish_with_message("done");
+                    pb.finish_with_message(&format!("done: {}", self.base.url_list[current]));
                     return Ok(());
                 }
             }
