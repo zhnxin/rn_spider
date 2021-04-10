@@ -95,6 +95,7 @@ impl Task {
         } else {
             None
         };
+        let mut item_count = 0;
 
         loop {
             if !self.is_running.load(Ordering::SeqCst) {
@@ -104,12 +105,13 @@ impl Task {
             if let Some(s) = self.base.url_list.get(current) {
                 url = self.base.base.clone();
                 url.push_str(s.as_str());
-                pb.set_message(&format!("item {:?}", s));
+                pb.set_message(&format!("item({:04}) {:?}", item_count, s));
             } else {
                 return Err(Box::new(ErrorWithStr::new(
                     "index out of board for current",
                 )));
             }
+            item_count += 1;
             let mut res = surf::get(&url).await?;
             let document = scraper::Html::parse_document(&res.body_string().await?);
             if let Some(selector) = _title_selector.as_ref() {
