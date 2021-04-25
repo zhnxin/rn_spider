@@ -9,6 +9,8 @@ pub struct BaseConf {
     pub content: String,
     pub next: String,
     pub next_regexp: String,
+    pub sub: String,
+    pub sub_regexp: String,
 }
 #[derive(Default, Debug)]
 pub struct Task {
@@ -95,22 +97,39 @@ impl Task {
         } else {
             None
         };
+        let _sub_selector: Option<scraper::Selector> = if !self.base.sub.is_empty() {
+            Some(scraper::Selector::parse(&self.base.sub).unwrap())
+        } else {
+            None
+        };
+
+        let _sub_pattern: Option<regex::Regex> = if !self.base.sub_regexp.is_empty() {
+            Some(regex::Regex::new(self.base.sub_regexp.as_ref()).unwrap())
+        } else {
+            None
+        };
         let mut item_count = 0;
+        let mut sub_url_list: Vec<String> = Vec::new();
+        let mut item: String = String::new();
 
         loop {
             if !self.is_running.load(Ordering::SeqCst) {
                 return Ok(());
             }
             let current = self.current.load(Ordering::SeqCst);
-            if let Some(s) = self.base.url_list.get(current) {
-                url = self.base.base.clone();
-                url.push_str(s.as_str());
-                pb.set_message(&format!("item({:04}) {:?}", item_count, s));
+            // 存在子页面
+            if let Some(s) = sub_url_list.last() {
+                item = String::from(s);
+            } else if let Some(s) = self.base.url_list.get(current) {
+                item = String::from(s);
             } else {
                 return Err(Box::new(ErrorWithStr::new(
                     "index out of board for current",
                 )));
             }
+            url = self.base.base.clone();
+            url.push_str(item.as_str());
+            pb.set_message(&format!("item({:04}) {:?}", item_count, &item));
             item_count += 1;
             let mut res = surf::get(&url).await?;
             let document = scraper::Html::parse_document(&res.body_string().await?);
@@ -131,22 +150,41 @@ impl Task {
                     return Err(Box::new(ErrorWithStr::new("no content found")));
                 }
             }
-            if let Some(selector) = _next_selector.as_ref() {
-                if let Some(next) = document.select(selector).next() {
-                    if let Some(href) = next.value().attr("href") {
-                        if let Some(pattern) = _next_pattern.as_ref() {
-                            if pattern.is_match(href) {
+            // 不存在子页面且有配置下一页面selector
+            if sub_url_list.is_empty() {
+                if let Some(selector) = _sub_selector.as_ref() {
+                    for _sub in document.select(selector) {
+                        if let Some(href) = _sub.value().attr("href") {
+                            if let Some(pattern) = _sub_pattern.as_ref() {
+                                if pattern.is_match(href) {
+                                    sub_url_list.push(String::from(href));
+                                }
+                            } else {
+                                sub_url_list.push(String::from(href));
+                            }
+                        }
+                    }
+                    sub_url_list.reverse();
+                }
+            } else {
+                sub_url_list.pop();
+            }
+            if sub_url_list.is_empty() {
+                if let Some(selector) = _next_selector.as_ref() {
+                    if let Some(next) = document.select(selector).next() {
+                        if let Some(href) = next.value().attr("href") {
+                            if let Some(pattern) = _next_pattern.as_ref() {
+                                if pattern.is_match(href) {
+                                    self.base.url_list[current] = String::from(href);
+                                    continue;
+                                }
+                            } else {
                                 self.base.url_list[current] = String::from(href);
                                 continue;
                             }
-                        } else {
-                            self.base.url_list[current] = String::from(href);
-                            continue;
                         }
                     }
                 }
-            }
-            {
                 *self.current.get_mut() += 1;
                 pb.inc(1);
                 if self.current.load(Ordering::SeqCst) >= self.base.url_list.len() {
