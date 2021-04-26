@@ -5,11 +5,16 @@ use serde::Deserialize;
 pub struct BaseConf {
     pub base: String,
     pub url_list: Vec<String>,
+    #[serde(default)]
     pub title: String,
     pub content: String,
+    #[serde(default)]
     pub next: String,
+    #[serde(default)]
     pub next_regexp: String,
+    #[serde(default)]
     pub sub: String,
+    #[serde(default)]
     pub sub_regexp: String,
 }
 #[derive(Default, Debug)]
