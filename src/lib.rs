@@ -16,6 +16,8 @@ pub struct BaseConf {
     pub sub: String,
     #[serde(default)]
     pub sub_regexp: String,
+    #[serde(default)]
+    pub encoding: String,
 }
 #[derive(Default, Debug)]
 pub struct Task {
@@ -52,7 +54,7 @@ impl std::error::Error for ErrorWithStr {
 
 impl Task {
     pub fn new(conf: BaseConf, ouput: String) -> Result<Self, String> {
-        let t = Task {
+        let mut t = Task {
             is_running: AtomicBool::new(false),
             base: conf,
             output: ouput,
@@ -60,6 +62,9 @@ impl Task {
         };
         if t.base.content.is_empty() {
             return Err(String::from("content is expected"));
+        }
+        if t.base.encoding.is_empty() {
+            t.base.encoding = std::string::String::from("utf-8");
         }
         Ok(t)
     }
@@ -90,6 +95,8 @@ impl Task {
         } else {
             None
         };
+        let encoding_format = encoding::label::encoding_from_whatwg_label(&self.base.encoding)
+            .expect("unknow encoding");
         let _content_selector = scraper::Selector::parse(&self.base.content).unwrap();
         let _next_selector: Option<scraper::Selector> = if !self.base.next.is_empty() {
             Some(scraper::Selector::parse(&self.base.next).unwrap())
@@ -137,7 +144,16 @@ impl Task {
             pb.set_message(&format!("item({:04}) {:?}", item_count, &item));
             item_count += 1;
             let mut res = surf::get(&url).await?;
-            let document = scraper::Html::parse_document(&res.body_string().await?);
+            // let document = scraper::Html::parse_document(&res.body_string().await?);
+            let document = scraper::Html::parse_document(
+                encoding_format
+                    .decode(
+                        res.body_bytes().await?.as_slice(),
+                        encoding::types::DecoderTrap::Ignore,
+                    )
+                    .unwrap()
+                    .as_str(),
+            );
             if let Some(selector) = _title_selector.as_ref() {
                 let title = document.select(selector).next().unwrap();
                 for s in title.text() {
