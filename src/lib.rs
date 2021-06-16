@@ -18,6 +18,9 @@ pub struct BaseConf {
     pub sub_regexp: String,
     #[serde(default)]
     pub encoding: String,
+    // skip the current page, and start to store next page if existed or sub page
+    #[serde(default)]
+    pub is_expired_next: bool,
 }
 #[derive(Default, Debug)]
 pub struct Task {
@@ -68,9 +71,9 @@ impl Task {
         }
         Ok(t)
     }
-    pub fn stop(&mut self) {
-        *self.is_running.get_mut() = false;
-    }
+    // pub fn stop(&mut self) {
+    //     *self.is_running.get_mut() = false;
+    // }
     pub async fn process(
         &mut self,
     ) -> Result<(), Box<dyn std::error::Error + std::marker::Send + std::marker::Sync>> {
@@ -122,7 +125,8 @@ impl Task {
         };
         let mut item_count = 0;
         let mut sub_url_list: Vec<String> = Vec::new();
-        let mut item: String = String::new();
+        let mut item: String;
+        let mut is_expired_next = self.base.is_expired_next;
 
         loop {
             if !self.is_running.load(Ordering::SeqCst) {
@@ -154,22 +158,26 @@ impl Task {
                     .unwrap()
                     .as_str(),
             );
-            if let Some(selector) = _title_selector.as_ref() {
-                let title = document.select(selector).next().unwrap();
-                for s in title.text() {
-                    output.write_all(s.as_bytes()).await?;
-                }
-                output.write_all(&['\n' as u8]).await?;
-            }
-            {
-                if let Some(content) = document.select(&_content_selector).next() {
-                    for s in content.text() {
+            if !is_expired_next {
+                if let Some(selector) = _title_selector.as_ref() {
+                    let title = document.select(selector).next().unwrap();
+                    for s in title.text() {
                         output.write_all(s.as_bytes()).await?;
                     }
                     output.write_all(&['\n' as u8]).await?;
-                } else {
-                    return Err(Box::new(ErrorWithStr::new("no content found")));
                 }
+                {
+                    if let Some(content) = document.select(&_content_selector).next() {
+                        for s in content.text() {
+                            output.write_all(s.as_bytes()).await?;
+                        }
+                        output.write_all(&['\n' as u8]).await?;
+                    } else {
+                        return Err(Box::new(ErrorWithStr::new("no content found")));
+                    }
+                }
+            } else {
+                is_expired_next = false;
             }
             // 不存在子页面且有配置下一页面selector
             if sub_url_list.is_empty() {
