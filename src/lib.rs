@@ -1,6 +1,6 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-
+use rand::prelude::*;
 use serde::Deserialize;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[derive(Default, Deserialize, Debug)]
 pub struct BaseConf {
     pub base: String,
@@ -21,6 +21,10 @@ pub struct BaseConf {
     // skip the current page, and start to store next page if existed or sub page
     #[serde(default)]
     pub is_expired_next: bool,
+    #[serde(default)]
+    pub agent: String,
+    #[serde(default)]
+    pub random_sleep_millis: u64,
 }
 #[derive(Default, Debug)]
 pub struct Task {
@@ -68,6 +72,9 @@ impl Task {
         }
         if t.base.encoding.is_empty() {
             t.base.encoding = std::string::String::from("utf-8");
+        }
+        if t.base.agent.is_empty() {
+            t.base.agent = std::string::String::from("Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:90.0) Gecko/20100101 Firefox/90.0")
         }
         Ok(t)
     }
@@ -123,7 +130,8 @@ impl Task {
         } else {
             None
         };
-        let mut item_count = 0;
+        let mut item_count = 0_usize;
+        let mut rng = rand::thread_rng();
         let mut sub_url_list: Vec<String> = Vec::new();
         let mut item: String;
         let mut is_expired_next = self.base.is_expired_next;
@@ -146,13 +154,21 @@ impl Task {
             url = self.base.base.clone();
             url.push_str(item.as_str());
             pb.set_message(&format!("item({:04}) {:?}", item_count, &item));
+            if item_count > 0 && self.base.random_sleep_millis > 0 {
+                async_std::task::sleep(std::time::Duration::from_millis(
+                    rng.gen::<u64>() % self.base.random_sleep_millis,
+                ))
+                .await;
+            }
             item_count += 1;
-            let mut res = surf::get(&url).await?;
-            // let document = scraper::Html::parse_document(&res.body_string().await?);
             let document = scraper::Html::parse_document(
                 encoding_format
                     .decode(
-                        res.body_bytes().await?.as_slice(),
+                        surf::get(&url)
+                            .header("User-Agent", &self.base.agent)
+                            .recv_bytes()
+                            .await?
+                            .as_slice(),
                         encoding::types::DecoderTrap::Ignore,
                     )
                     .unwrap()
