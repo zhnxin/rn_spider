@@ -25,6 +25,8 @@ pub struct BaseConf {
     pub agent: String,
     #[serde(default)]
     pub random_sleep_millis: u64,
+    #[serde(default)]
+    pub is_inner_html: bool,
 }
 #[derive(Default, Debug)]
 pub struct Task {
@@ -184,10 +186,15 @@ impl Task {
                 }
                 {
                     if let Some(content) = document.select(&_content_selector).next() {
-                        for s in content.text() {
-                            output.write_all(s.as_bytes()).await?;
+                        if self.base.is_inner_html {
+                            output.write_all(content.html().as_bytes()).await?;
+                            output.write_all(&['\n' as u8]).await?;
+                        } else {
+                            for s in content.text() {
+                                output.write_all(s.as_bytes()).await?;
+                            }
+                            output.write_all(&['\n' as u8]).await?;
                         }
-                        output.write_all(&['\n' as u8]).await?;
                     } else {
                         return Err(Box::new(ErrorWithStr::new("no content found")));
                     }
