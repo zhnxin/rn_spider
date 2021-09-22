@@ -166,11 +166,20 @@ impl Task {
             let document = scraper::Html::parse_document(
                 encoding_format
                     .decode(
-                        surf::get(&url)
+                        match surf::get(&url)
                             .header("User-Agent", &self.base.agent)
                             .recv_bytes()
-                            .await?
-                            .as_slice(),
+                            .await
+                        {
+                            Ok(res) => res,
+                            Err(e) => {
+                                return Err(Box::new(ErrorWithStr::new(&format!(
+                                    "item({:04}) {:?}: {:?}",
+                                    item_count, &item, e
+                                ))))
+                            }
+                        }
+                        .as_slice(),
                         encoding::types::DecoderTrap::Ignore,
                     )
                     .unwrap()
