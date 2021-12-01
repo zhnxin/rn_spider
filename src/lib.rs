@@ -27,6 +27,8 @@ pub struct BaseConf {
     pub random_sleep_millis: u64,
     #[serde(default)]
     pub is_inner_html: bool,
+    #[serde(default)]
+    pub url_list_index: usize,
 }
 #[derive(Default, Debug)]
 pub struct Task {
@@ -78,6 +80,9 @@ impl Task {
         if t.base.agent.is_empty() {
             t.base.agent = std::string::String::from("Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:90.0) Gecko/20100101 Firefox/90.0")
         }
+        if t.base.url_list_index > t.base.url_list.len() {
+            return Err(String::from("url_list_index is out of index for url_list"));
+        }
         Ok(t)
     }
     // pub fn stop(&mut self) {
@@ -88,7 +93,7 @@ impl Task {
     ) -> Result<(), Box<dyn std::error::Error + std::marker::Send + std::marker::Sync>> {
         use async_std::prelude::*;
         *self.is_running.get_mut() = true;
-        *self.current.get_mut() = 0;
+        *self.current.get_mut() = self.base.url_list_index;
         let mut output = async_std::fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -132,7 +137,8 @@ impl Task {
         } else {
             None
         };
-        let mut item_count = 0_usize;
+        let mut item_count = self.base.url_list_index;
+        pb.set_position(item_count as u64);
         let mut rng = rand::thread_rng();
         let mut sub_url_list: Vec<String> = Vec::new();
         let mut item: String;
@@ -162,7 +168,6 @@ impl Task {
                 ))
                 .await;
             }
-            item_count += 1;
             let document = scraper::Html::parse_document(
                 encoding_format
                     .decode(
@@ -185,6 +190,7 @@ impl Task {
                     .unwrap()
                     .as_str(),
             );
+            item_count += 1;
             if !is_expired_next {
                 if let Some(selector) = _title_selector.as_ref() {
                     let title = document.select(selector).next().unwrap();
