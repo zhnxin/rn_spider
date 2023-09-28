@@ -13,6 +13,8 @@ pub struct BaseConf {
     #[serde(default)]
     pub next_regexp: String,
     #[serde(default)]
+    pub next_regexp_not_match: String,
+    #[serde(default)]
     pub sub: String,
     #[serde(default)]
     pub sub_regexp: String,
@@ -126,6 +128,11 @@ impl Task {
         } else {
             None
         };
+        let _next_pattern_not_match: Option<regex::Regex> = if !self.base.next_regexp_not_match.is_empty() {
+            Some(regex::Regex::new(self.base.next_regexp_not_match.as_ref()).unwrap())
+        } else {
+            None
+        };
         let _sub_selector: Option<scraper::Selector> = if !self.base.sub.is_empty() {
             Some(scraper::Selector::parse(&self.base.sub).unwrap())
         } else {
@@ -193,7 +200,7 @@ impl Task {
             item_count += 1;
             if !is_expired_next {
                 if let Some(selector) = _title_selector.as_ref() {
-                    let title = document.select(selector).next().unwrap();
+                    let title: scraper::ElementRef<'_> = document.select(selector).next().unwrap();
                     for s in title.text() {
                         output.write_all(s.as_bytes()).await?;
                     }
@@ -240,14 +247,22 @@ impl Task {
                 if let Some(selector) = _next_selector.as_ref() {
                     if let Some(next) = document.select(selector).next() {
                         if let Some(href) = next.value().attr("href") {
-                            if let Some(pattern) = _next_pattern.as_ref() {
-                                if pattern.is_match(href) {
+                            // 校验url地址——不匹配
+                            let _is_exclude_match = if let Some(pattern) = _next_pattern_not_match.as_ref() {
+                                pattern.is_match(href)
+                            }else{
+                                false
+                            };
+                            if !_is_exclude_match{
+                                if let Some(pattern) = _next_pattern.as_ref() {
+                                    if pattern.is_match(href) {
+                                        self.base.url_list[current] = String::from(href);
+                                        continue;
+                                    }
+                                } else {
                                     self.base.url_list[current] = String::from(href);
                                     continue;
                                 }
-                            } else {
-                                self.base.url_list[current] = String::from(href);
-                                continue;
                             }
                         }
                     }
