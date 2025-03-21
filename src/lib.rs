@@ -1,5 +1,6 @@
 use rand::prelude::*;
 use serde::Deserialize;
+use tokio::io::AsyncWriteExt;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[derive(Default, Deserialize, Debug)]
 pub struct BaseConf {
@@ -31,6 +32,9 @@ pub struct BaseConf {
     pub is_inner_html: bool,
     #[serde(default)]
     pub url_list_index: usize,
+    #[serde(default)]
+    pub proxy: String,
+    
 }
 #[derive(Default, Debug)]
 pub struct Task {
@@ -93,10 +97,9 @@ impl Task {
     pub async fn process(
         &mut self,
     ) -> Result<(), Box<dyn std::error::Error + std::marker::Send + std::marker::Sync>> {
-        use async_std::prelude::*;
         *self.is_running.get_mut() = true;
         *self.current.get_mut() = self.base.url_list_index;
-        let mut output = async_std::fs::OpenOptions::new()
+        let mut output = tokio::fs::OpenOptions::new()
             .write(true)
             .create(true)
             .append(true)
@@ -104,7 +107,7 @@ impl Task {
             .await?;
         let mut url: String;
         let sty = indicatif::ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
+            .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")?
             .progress_chars("##-");
         let pb: indicatif::ProgressBar =
             indicatif::ProgressBar::new(self.base.url_list.len() as u64);
@@ -150,7 +153,12 @@ impl Task {
         let mut sub_url_list: Vec<String> = Vec::new();
         let mut item: String;
         let mut is_expired_next = self.base.is_expired_next;
-
+        let client = 
+            if self.base.proxy.is_empty() {
+                reqwest::Client::builder().user_agent(&self.base.agent).build().unwrap()
+            } else {
+                reqwest::Client::builder().user_agent(&self.base.agent).proxy(reqwest::Proxy::all(&self.base.proxy).unwrap()).build().unwrap()
+            };
         loop {
             if !self.is_running.load(Ordering::SeqCst) {
                 return Ok(());
@@ -168,9 +176,9 @@ impl Task {
             }
             url = self.base.base.clone();
             url.push_str(item.as_str());
-            pb.set_message(&format!("item({:04}) {:?}", item_count, &item));
+            pb.set_message(format!("item({:04}) {:?}", item_count, &item));
             if item_count > 0 && self.base.random_sleep_millis > 0 {
-                async_std::task::sleep(std::time::Duration::from_millis(
+                tokio::time::sleep(std::time::Duration::from_millis(
                     rng.gen::<u64>() % self.base.random_sleep_millis,
                 ))
                 .await;
@@ -178,11 +186,10 @@ impl Task {
             let document = scraper::Html::parse_document(
                 encoding_format
                     .decode(
-                        match surf::get(&url)
-                            .header("User-Agent", &self.base.agent)
-                            .recv_bytes()
-                            .await
-                        {
+                        match client.get(&url).send()
+                        .await?
+                        .bytes()
+                        .await{
                             Ok(res) => res,
                             Err(e) => {
                                 return Err(Box::new(ErrorWithStr::new(&format!(
@@ -190,8 +197,7 @@ impl Task {
                                     item_count, &item, e
                                 ))))
                             }
-                        }
-                        .as_slice(),
+                        }.as_ref(),
                         encoding::types::DecoderTrap::Ignore,
                     )
                     .unwrap()
@@ -271,7 +277,7 @@ impl Task {
                 pb.inc(1);
                 if self.current.load(Ordering::SeqCst) >= self.base.url_list.len() {
                     *self.is_running.get_mut() = false;
-                    pb.finish_with_message(&format!("done: {}", self.base.url_list[current]));
+                    pb.finish_with_message(format!("done: {}", self.base.url_list[current]));
                     return Ok(());
                 }
             }

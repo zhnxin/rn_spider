@@ -1,7 +1,16 @@
-mod lib;
-use async_std::task;
-use clap::{App, Arg};
-use lib::{BaseConf, Task};
+use rn_spider::{BaseConf, Task};
+use clap::Parser;
+
+/// act like a spider
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args{
+    /// a custom config file
+    #[arg(short,default_value = "config.toml")]
+    config:String,
+    /// the output file to store
+    output:String,
+}
 
 fn parse_conf(path: &str) -> BaseConf {
     use std::io::prelude::*;
@@ -19,37 +28,16 @@ fn parse_conf(path: &str) -> BaseConf {
     base_conf
 }
 
-fn main() {
-    let matches = App::new("My Super Program")
-        .version("1.0")
-        .author("ZhengXin <zhnngxin@gmail.com>")
-        .about("Does awesome things")
-        .arg(
-            Arg::with_name("config")
-                .short("c")
-                .long("config")
-                .value_name("FILE")
-                .help("Sets a custom config file")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("OUTPUT")
-                .help("Sets the output file to store")
-                .required(true)
-                .index(1),
-        )
-        .get_matches();
-
-    let config = matches.value_of("config").unwrap_or("conf.toml");
-    let base_conf = parse_conf(config);
-    task::block_on(async {
-        let mut task = match Task::new(base_conf, String::from(matches.value_of("OUTPUT").unwrap()))
+#[tokio::main]
+async fn main() {
+    let args = Args::parse();
+    let base_conf = parse_conf(args.config.as_str());
+    let mut task = match Task::new(base_conf,args.output)
         {
             Ok(t) => t,
-            Err(e) => panic!(e),
+            Err(e) => panic!("{}", e),
         };
-        if let Err(e) = task.process().await {
-            println!("{:?}", e);
-        }
-    });
+    if let Err(e) = task.process().await {
+        println!("{:?}", e);
+    }
 }

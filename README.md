@@ -16,6 +16,7 @@ Rhe ENV https_proxy and http_proxy can be set for proxy.
 base = 'https://example.com/views?id='
 content = 'div.content'
 title = 'div.h1.title'
+proxy=''
 url_list = [
     '1097436230',
     '1036253449'

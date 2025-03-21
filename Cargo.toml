@@ -2,18 +2,18 @@
 authors = ["郑欣 <zhngxin@aliyun.com>"]
 edition = "2018"
 name = "rn_spider"
-version = "0.1.0"
+version = "0.1.1"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-std = "1.6.1"
-clap = "2.33.3"
+reqwest = { version = "0.12", features = ["socks"] }
+tokio = { version = "1", features = ["full"] }
 encoding = "0.2.33"
-indicatif = "0.15.0"
-regex = "1.4.3"
-scraper = "0.12.0"
-serde = {version = "1.0.123", features = ["derive"]}
-surf = "2.2.0"
-toml = "0.5.8"
-rand = "0.8.3"
+indicatif = "0.17"
+regex = "1.6"
+scraper = "0.14"
+serde = { version = "1.0.140", features = ["derive"] }
+toml = "0.6"
+rand = "0.8.5"
+clap = { version = "4.5.32", features = ["derive"] }
