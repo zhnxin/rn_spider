@@ -38,6 +38,6 @@ async fn main() {
             Err(e) => panic!("{}", e),
         };
     if let Err(e) = task.process().await {
-        println!("{:?}", e);
+        println!("{}", e);
     }
 }

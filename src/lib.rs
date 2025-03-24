@@ -29,6 +29,8 @@ pub struct BaseConf {
     #[serde(default)]
     pub random_sleep_millis: u64,
     #[serde(default)]
+    pub sleep_millis: u64,
+    #[serde(default)]
     pub is_inner_html: bool,
     #[serde(default)]
     pub url_list_index: usize,
@@ -96,7 +98,7 @@ impl Task {
     // }
     pub async fn process(
         &mut self,
-    ) -> Result<(), Box<dyn std::error::Error + std::marker::Send + std::marker::Sync>> {
+    ) -> Result<(), String> {
         *self.is_running.get_mut() = true;
         *self.current.get_mut() = self.base.url_list_index;
         let mut output = tokio::fs::OpenOptions::new()
@@ -104,10 +106,12 @@ impl Task {
             .create(true)
             .append(true)
             .open(self.output.as_str())
-            .await?;
+            .await
+            .map_err(|e| format!("Failed to open file: {}", e))?;
         let mut url: String;
         let sty = indicatif::ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")?
+            .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
+            .map_err(|e| format!("Failed to set progress style: {}", e))?
             .progress_chars("##-");
         let pb: indicatif::ProgressBar =
             indicatif::ProgressBar::new(self.base.url_list.len() as u64);
@@ -170,16 +174,14 @@ impl Task {
             } else if let Some(s) = self.base.url_list.get(current) {
                 item = String::from(s);
             } else {
-                return Err(Box::new(ErrorWithStr::new(
-                    "index out of board for current",
-                )));
+                return Err(String::from("index out of board for current"));
             }
             url = self.base.base.clone();
             url.push_str(item.as_str());
             pb.set_message(format!("item({:04}) {:?}", item_count, &item));
-            if item_count > 0 && self.base.random_sleep_millis > 0 {
+            if item_count > 0 && (self.base.random_sleep_millis > 0 || self.base.sleep_millis > 0) {
                 tokio::time::sleep(std::time::Duration::from_millis(
-                    rng.gen::<u64>() % self.base.random_sleep_millis,
+                    self.base.sleep_millis + rng.gen::<u64>() % self.base.random_sleep_millis,
                 ))
                 .await;
             }
@@ -187,45 +189,46 @@ impl Task {
                 encoding_format
                     .decode(
                         match client.get(&url).send()
-                        .await?
+                        .await
+                        .map_err(|e| format!("{}", e))?
                         .bytes()
                         .await{
                             Ok(res) => res,
                             Err(e) => {
-                                return Err(Box::new(ErrorWithStr::new(&format!(
+                                return Err(format!(
                                     "item({:04}) {:?}: {:?}",
                                     item_count, &item, e
-                                ))))
+                                ))
                             }
                         }.as_ref(),
                         encoding::types::DecoderTrap::Ignore,
-                    )
-                    .unwrap()
+                    )?
                     .as_str(),
             );
             item_count += 1;
             if !is_expired_next {
                 if let Some(selector) = _title_selector.as_ref() {
-                    let title: scraper::ElementRef<'_> = document.select(selector).next().unwrap();
-                    for s in title.text() {
-                        output.write_all(s.as_bytes()).await?;
-                    }
-                    output.write_all(&['\n' as u8]).await?;
-                }
-                {
-                    if let Some(content) = document.select(&_content_selector).next() {
-                        if self.base.is_inner_html {
-                            output.write_all(content.html().as_bytes()).await?;
-                            output.write_all(&['\n' as u8]).await?;
-                        } else {
-                            for s in content.text() {
-                                output.write_all(s.as_bytes()).await?;
-                            }
-                            output.write_all(&['\n' as u8]).await?;
+                    if let Some(title) = document.select(selector).next(){
+                        for s in title.text() {
+                            output.write_all(s.as_bytes()).await.map_err(|e| format!("文件写入异常: {}", e))?;
                         }
-                    } else {
-                        return Err(Box::new(ErrorWithStr::new("no content found")));
+                        let _ = output.write_all('\n'.to_string().as_bytes()).await.map_err(|e| format!("文件写入异常: {}", e))?;
+                    }else{
+                        return Err(format!("no title found: {}\n\n{}",&item,document.html()));
                     }
+                }
+                if let Some(content) = document.select(&_content_selector).next() {
+                    if self.base.is_inner_html {
+                        let _ = output.write_all(content.html().as_bytes()).await.map_err(|e| format!("文件写入异常: {}", e))?;
+                        let _ = output.write_all('\n'.to_string().as_bytes()).await.map_err(|e| format!("文件写入异常: {}", e))?;
+                    } else {
+                        for s in content.text() {
+                            let _ = output.write_all(s.as_bytes()).await.map_err(|e| format!("文件写入异常: {}", e))?;
+                        }
+                        let _ = output.write_all('\n'.to_string().as_bytes()).await.map_err(|e| format!("文件写入异常: {}", e))?;
+                    }
+                } else {
+                    return Err(format!("no content found: {}\n\n{}",&item,document.html()));
                 }
             } else {
                 is_expired_next = false;
